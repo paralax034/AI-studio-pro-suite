@@ -1,23 +1,162 @@
 'use strict';
 
 /**
- * @module UI
- * @description Native Material 3 UI adapter for Google AI Studio.
- * Uses 1:1 platform design tokens extracted directly from AI Studio stylesheets.
+ * AI Studio Pro Suite
+ * Core Runtime: Presets, RPC Interceptor, and Jitter-Free Native UI.
  */
 (function () {
+  const PRESETS = {
+    deterministic: { name: 'Deterministic / Strict Code', temp: 0.0, topP: 0.1, topK: 1 },
+    precise: { name: 'Precise / Data Extraction', temp: 0.2, topP: 0.4, topK: 16 },
+    academic: { name: 'Academic & Technical', temp: 0.45, topP: 0.7, topK: 24 },
+    gamedev: { name: 'Creative Code & Shaders', temp: 0.65, topP: 0.85, topK: 40 },
+    balance: { name: 'Balanced (Default)', temp: 1.0, topP: 0.95, topK: 64 },
+    roleplay: { name: 'Conversational & Roleplay', temp: 1.15, topP: 0.92, topK: 64 },
+    creative: { name: 'Creative & Storytelling', temp: 1.4, topP: 0.95, topK: 80 },
+    brainstorm: { name: 'Brainstorm & Ideation', temp: 1.75, topP: 0.98, topK: 100 },
+    entropy: { name: 'Maximum Entropy / Experimental', temp: 2.0, topP: 1.0, topK: 128 }
+  };
+
+  const DEFAULT_PARAMS = {
+    preset: 'balance',
+    temperature: PRESETS.balance.temp,
+    topP: PRESETS.balance.topP,
+    topK: PRESETS.balance.topK
+  };
+
+  function getStorageKey() {
+    const promptMatch = location.pathname.match(/\/prompts\/([a-zA-Z0-9_-]+)/);
+    const promptId = promptMatch ? promptMatch[1] : 'new_chat';
+    const modelEl = document.querySelector('[data-test-id="model-name"]') || document.querySelector('.model-name');
+    const modelName = modelEl ? modelEl.textContent.trim().replace(/\s+/g, '_') : 'default_model';
+    return `aistudio_cfg_${promptId}_${modelName}`;
+  }
+
+  function loadParams() {
+    try {
+      const raw = localStorage.getItem(getStorageKey());
+      return raw ? { ...DEFAULT_PARAMS, ...JSON.parse(raw) } : { ...DEFAULT_PARAMS };
+    } catch {
+      return { ...DEFAULT_PARAMS };
+    }
+  }
+
+  function saveParams(params) {
+    try {
+      localStorage.setItem(getStorageKey(), JSON.stringify(params));
+    } catch (e) {
+      console.warn('[AISU] Storage error:', e);
+    }
+  }
+
+  function parseNum(val, isFloat) {
+    if (val === undefined || val === null) return 0;
+    const clean = String(val).replace(',', '.').trim();
+    const num = isFloat ? parseFloat(clean) : parseInt(clean, 10);
+    return Number.isNaN(num) ? 0 : num;
+  }
+
+  // RPC Interceptor
+  function findConfigArray(arr) {
+    if (!Array.isArray(arr)) return null;
+    if (arr.length >= 6 && typeof arr[2] === 'string' && arr[2].startsWith('models/')) return arr;
+    for (let i = 0; i < arr.length; i++) {
+      if (Array.isArray(arr[i])) {
+        const found = findConfigArray(arr[i]);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function modifyPayload(rawBody) {
+    if (!rawBody || typeof rawBody !== 'string') return rawBody;
+    try {
+      const body = JSON.parse(rawBody);
+      const cfg = findConfigArray(body);
+      if (cfg) {
+        const params = loadParams();
+        cfg[0] = parseNum(params.temperature, true);
+        cfg[4] = parseNum(params.topP, true);
+        cfg[5] = parseNum(params.topK, false);
+        return JSON.stringify(body);
+      }
+    } catch (e) {
+      console.warn('[AISU] Intercept skipped:', e);
+    }
+    return rawBody;
+  }
+
+  function sanitizeResponse(raw) {
+    if (!raw || typeof raw !== 'string') return raw;
+    return raw
+      .replace(/"The model output could not be generated[^"]*"/g, 'null')
+      .replace(/"PROHIBITED_CONTENT"/g, '"STOP"')
+      .replace(/"IMAGE_SAFETY"/g, '"STOP"')
+      .replace(/"blocked"\s*:\s*true/g, '"blocked":false');
+  }
+
+  const nativeOpen = XMLHttpRequest.prototype.open;
+  const nativeSend = XMLHttpRequest.prototype.send;
+  const descRT = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText');
+  const getRT = descRT && descRT.get;
+  const descR = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response');
+  const getR = descR && descR.get;
+
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    this._url = typeof url === 'string' ? url : (url ? url.toString() : '');
+    this._isGenerate = this._url.includes('MakerSuiteService/GenerateContent');
+    return nativeOpen.call(this, method, url, ...rest);
+  };
+
+  XMLHttpRequest.prototype.send = function (body) {
+    if (this._isGenerate) {
+      if (getRT) {
+        Object.defineProperty(this, 'responseText', {
+          get() {
+            const raw = getRT.call(this);
+            return typeof raw === 'string' ? sanitizeResponse(raw) : raw;
+          },
+          configurable: true
+        });
+      }
+      if (getR) {
+        Object.defineProperty(this, 'response', {
+          get() {
+            const raw = getR.call(this);
+            return typeof raw === 'string' ? sanitizeResponse(raw) : raw;
+          },
+          configurable: true
+        });
+      }
+      if (typeof body === 'string') body = modifyPayload(body);
+    }
+    return nativeSend.call(this, body);
+  };
+
+  const nativeFetch = window.fetch;
+  window.fetch = async function (input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+    if (url.includes('MakerSuiteService/GenerateContent')) {
+      if (init && typeof init.body === 'string') {
+        init.body = modifyPayload(init.body);
+      } else if (input instanceof Request) {
+        try {
+          const raw = await input.clone().text();
+          input = new Request(input, { body: modifyPayload(raw) });
+        } catch (e) {
+          console.warn('[AISU] Fetch intercept skipped:', e);
+        }
+      }
+    }
+    return nativeFetch.call(this, input, init);
+  };
+
+  // UI & Layout Controller
   let isInternalMutation = false;
   let rafSyncId = null;
   let lastModelName = '';
 
-  /**
-   * @function createEl
-   * @description Trusted Types compliant DOM element factory.
-   * @param {string} tag
-   * @param {Object} [props={}]
-   * @param {...(Node|string|Array)} children
-   * @returns {HTMLElement|SVGElement}
-   */
   function createEl(tag, props = {}, ...children) {
     const el = tag === 'svg' || tag === 'path'
       ? document.createElementNS('http://www.w3.org/2000/svg', tag)
@@ -25,13 +164,9 @@
 
     for (const [k, v] of Object.entries(props)) {
       if (v === null || v === undefined) continue;
-      if (k === 'className') {
-        el.className = v;
-      } else if (k === 'textContent') {
-        el.textContent = v;
-      } else {
-        el.setAttribute(k, String(v));
-      }
+      if (k === 'className') el.className = v;
+      else if (k === 'textContent') el.textContent = v;
+      else el.setAttribute(k, String(v));
     }
 
     for (const child of children.flat()) {
@@ -41,309 +176,6 @@
     return el;
   }
 
-  /**
-   * @function injectStyles
-   * @description Mounts styles mapped directly to AI Studio's native CSS variables.
-   */
-  function injectStyles() {
-    if (document.getElementById('aisu-design-tokens')) return;
-    const target = document.head || document.documentElement;
-    if (!target) return;
-
-    const styleEl = createEl('style', { id: 'aisu-design-tokens' });
-    styleEl.textContent = `
-      :root {
-        --aisu-font: Inter, sans-serif;
-        --aisu-bg-surface: var(--color-v3-surface-container, #1f1f1f);
-        --aisu-bg-field: var(--color-v3-surface-container-high, #252525);
-        --aisu-bg-hover: var(--color-v3-hover, #323232);
-        --aisu-bg-selected: var(--color-v3-surface-container-highest, #2a2a2a);
-        --aisu-border-subtle: var(--color-v3-outline-var, #262626);
-        --aisu-border-default: var(--color-v3-outline, #333333);
-        --aisu-border-active: var(--color-v3-outline-active, #b7babd);
-        --aisu-color-accent: var(--color-v3-text, #d4d4d4);
-        --aisu-text-primary: var(--color-v3-text, #d4d4d4);
-        --aisu-text-secondary: var(--color-v3-text-var, #8c8c8c);
-        --aisu-shadow-dropdown: var(--v3-shadow-dropdown, 0 4px 8px 3px rgba(0,0,0,0.05), 0 1px 3px 0 rgba(0,0,0,0.15));
-      }
-
-      .aisu-field-group {
-        border-bottom: 1px solid var(--aisu-border-subtle);
-        padding: clamp(8px, 1.2vw, 12px) 0 clamp(10px, 1.5vw, 14px);
-        width: 100%;
-        box-sizing: border-box;
-      }
-
-      .aisu-select {
-        position: relative;
-        width: 100%;
-      }
-
-      .aisu-select__trigger {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        width: 100%;
-        min-height: 40px;
-        height: 40px;
-        padding: 0 12px;
-        background-color: var(--aisu-bg-field);
-        border: 1px solid var(--aisu-border-subtle);
-        border-radius: 12px;
-        color: var(--aisu-text-primary);
-        font-family: var(--aisu-font);
-        font-size: 14px;
-        font-weight: 400;
-        line-height: 20px;
-        cursor: pointer;
-        user-select: none;
-        box-sizing: border-box;
-        transition: border-color 0.15s ease-in-out, background-color 0.15s ease-in-out;
-      }
-
-      .aisu-select__trigger:hover {
-        border-color: var(--aisu-border-default);
-      }
-
-      .aisu-select__trigger[aria-expanded="true"] {
-        border-color: var(--aisu-border-active);
-      }
-
-      .aisu-select__label {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        padding-right: 8px;
-      }
-
-      .aisu-select__arrow {
-        flex-shrink: 0;
-        color: var(--aisu-text-primary);
-        transition: transform 0.2s ease;
-      }
-
-      .aisu-select__trigger[aria-expanded="true"] .aisu-select__arrow {
-        transform: rotate(180deg);
-      }
-
-      .aisu-select__menu {
-        position: absolute;
-        top: calc(100% + 4px);
-        left: 0;
-        width: 100%;
-        background-color: var(--aisu-bg-surface);
-        border: 1px solid var(--aisu-border-subtle);
-        border-radius: 8px;
-        box-shadow: var(--aisu-shadow-dropdown);
-        padding: 4px;
-        z-index: 1000;
-        box-sizing: border-box;
-      }
-
-      .aisu-select__option {
-        display: flex;
-        align-items: center;
-        width: 100%;
-        min-height: 36px;
-        padding: 6px 8px;
-        margin: 2px 0;
-        border-radius: 4px;
-        color: var(--aisu-text-primary);
-        font-family: var(--aisu-font);
-        cursor: pointer;
-        user-select: none;
-        box-sizing: border-box;
-        transition: background-color 0.12s ease-in-out;
-      }
-
-      .aisu-select__option:hover {
-        background-color: var(--aisu-bg-hover);
-      }
-
-      .aisu-select__option--selected {
-        background-color: var(--aisu-bg-selected);
-      }
-
-      .aisu-select__option-content {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        width: 100%;
-        min-width: 0;
-      }
-
-      .aisu-select__option-title {
-        font-size: 13px;
-        font-weight: 500;
-        line-height: 18px;
-        color: var(--aisu-text-primary);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .aisu-select__option-spec {
-        font-size: 11px;
-        font-weight: 400;
-        line-height: 14px;
-        color: var(--aisu-text-secondary);
-        letter-spacing: 0.2px;
-      }
-
-      .aisu-slider-item {
-        display: flex;
-        flex-direction: column;
-        width: 100%;
-        padding: clamp(6px, 1vw, 8px) 0;
-        box-sizing: border-box;
-      }
-
-      .aisu-slider-item__header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        width: 100%;
-        margin-bottom: 2px;
-      }
-
-      .aisu-slider-item__title {
-        font-family: var(--aisu-font);
-        font-size: 14px;
-        font-weight: 400;
-        line-height: 20px;
-        color: var(--aisu-text-primary);
-        margin: 0;
-      }
-
-      .aisu-slider-row {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        width: 100%;
-        min-height: 44px;
-      }
-
-      .aisu-slider-row__track-container {
-        position: relative;
-        flex: 1;
-        display: flex;
-        align-items: center;
-        min-height: 44px;
-      }
-
-      .aisu-slider-row__range {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 100%;
-        min-height: 44px;
-        height: 44px;
-        margin: 0;
-        background: transparent;
-        cursor: pointer;
-      }
-
-      .aisu-slider-row__range:focus {
-        outline: none;
-      }
-
-      .aisu-slider-row__range::-webkit-slider-runnable-track {
-        height: 4px;
-        border-radius: 2px;
-        background: linear-gradient(
-          to right,
-          var(--aisu-color-accent) 0%,
-          var(--aisu-color-accent) var(--aisu-progress, 50%),
-          var(--aisu-border-default) var(--aisu-progress, 50%),
-          var(--aisu-border-default) 100%
-        );
-      }
-
-      .aisu-slider-row__range::-moz-range-track {
-        height: 4px;
-        border-radius: 2px;
-        background: var(--aisu-border-default);
-      }
-
-      .aisu-slider-row__range::-moz-range-progress {
-        height: 4px;
-        border-radius: 2px;
-        background: var(--aisu-color-accent);
-      }
-
-      .aisu-slider-row__range::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 14px;
-        height: 14px;
-        margin-top: -5px;
-        border-radius: 50%;
-        background: var(--aisu-color-accent);
-        border: none;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-      }
-
-      .aisu-slider-row__range::-moz-range-thumb {
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background: var(--aisu-color-accent);
-        border: none;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-      }
-
-      .aisu-slider-row__input-wrap {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 48px;
-        min-height: 44px;
-      }
-
-      .aisu-slider-row__input {
-        width: 48px;
-        min-width: 48px;
-        height: 28px;
-        background-color: transparent;
-        border: 1px solid var(--aisu-border-subtle);
-        border-radius: 8px;
-        color: var(--aisu-text-primary);
-        font-family: var(--aisu-font);
-        font-size: 12px;
-        font-weight: 400;
-        line-height: 18px;
-        text-align: center;
-        box-sizing: border-box;
-        outline: none;
-        transition: border-color 0.15s ease-in-out;
-        -moz-appearance: textfield;
-      }
-
-      .aisu-slider-row__input:focus {
-        border-color: var(--aisu-border-active);
-      }
-
-      .aisu-slider-row__input::-webkit-inner-spin-button,
-      .aisu-slider-row__input::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        .aisu-select__trigger,
-        .aisu-select__arrow,
-        .aisu-select__option,
-        .aisu-slider-row__input {
-          transition: none;
-        }
-      }
-    `;
-    target.appendChild(styleEl);
-  }
-
-  /**
-   * @function updateSliderFill
-   * @param {HTMLInputElement} rangeEl
-   */
   function updateSliderFill(rangeEl) {
     if (!rangeEl) return;
     const min = parseFloat(rangeEl.min) || 0;
@@ -356,10 +188,6 @@
     }
   }
 
-  /**
-   * @function getActiveModelName
-   * @returns {string}
-   */
   function getActiveModelName() {
     const el = document.querySelector('[data-test-id="model-name"]') ||
                document.querySelector('.model-name') ||
@@ -367,10 +195,6 @@
     return el ? el.textContent.trim() : '';
   }
 
-  /**
-   * @function getNativeControls
-   * @returns {{nativeTempRange: HTMLInputElement|null, nativeTempNum: HTMLInputElement|null, nativeTopPRange: HTMLInputElement|null, nativeTopPNum: HTMLInputElement|null, nativeTopPContainer: HTMLElement|null}}
-   */
   function getNativeControls() {
     const isCustom = (el) => !el || el.hasAttribute('data-aisu') || el.closest('[data-aisu]');
 
@@ -399,11 +223,6 @@
     return { nativeTempRange, nativeTempNum, nativeTopPRange, nativeTopPNum, nativeTopPContainer };
   }
 
-  /**
-   * @function dispatchNativeInput
-   * @param {HTMLInputElement} input
-   * @param {string|number} value
-   */
   function dispatchNativeInput(input, value) {
     if (!input) return;
     const strVal = String(value);
@@ -411,28 +230,13 @@
     const descriptor = Object.getOwnPropertyDescriptor(proto, 'value') ||
                        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
 
-    if (descriptor && descriptor.set) {
-      descriptor.set.call(input, strVal);
-    } else {
-      input.value = strVal;
-    }
+    if (descriptor && descriptor.set) descriptor.set.call(input, strVal);
+    else input.value = strVal;
 
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  /**
-   * @function createCustomSlider
-   * @param {string} prefix
-   * @param {string} title
-   * @param {number} min
-   * @param {number} max
-   * @param {number} step
-   * @param {number} val
-   * @param {boolean} isFloat
-   * @param {string} tip
-   * @returns {HTMLDivElement}
-   */
   function createCustomSlider(prefix, title, min, max, step, val, isFloat, tip) {
     const range = createEl('input', {
       type: 'range',
@@ -483,13 +287,8 @@
     return block;
   }
 
-  /**
-   * @function createPresetDropdown
-   * @param {string} currentPresetKey
-   * @returns {HTMLDivElement}
-   */
   function createPresetDropdown(currentPresetKey) {
-    const activePreset = window.AISU.PRESETS[currentPresetKey];
+    const activePreset = PRESETS[currentPresetKey];
     const initialLabel = activePreset ? activePreset.name : 'Custom';
 
     const trigger = createEl('button', {
@@ -520,7 +319,7 @@
       hidden: 'true',
       'data-aisu': 'true'
     },
-      Object.entries(window.AISU.PRESETS).map(([k, p]) =>
+      Object.entries(PRESETS).map(([k, p]) =>
         createEl('div', {
           className: `aisu-select__option ${k === currentPresetKey ? 'aisu-select__option--selected' : ''}`,
           role: 'option',
@@ -544,15 +343,11 @@
     );
   }
 
-  /**
-   * @function applyPreset
-   * @param {string} presetKey
-   */
   function applyPreset(presetKey) {
-    const preset = window.AISU.PRESETS[presetKey];
+    const preset = PRESETS[presetKey];
     if (!preset) return;
 
-    window.AISU.saveCurrentParams({
+    saveParams({
       preset: presetKey,
       temperature: preset.temp,
       topP: preset.topP,
@@ -569,15 +364,12 @@
     syncInputsWithStorage();
   }
 
-  /**
-   * @function syncInputsWithStorage
-   */
   function syncInputsWithStorage() {
-    const params = window.AISU.loadCurrentParams();
+    const params = loadParams();
 
     const labelEl = document.getElementById('aisu-preset-label');
     if (labelEl) {
-      const activePreset = window.AISU.PRESETS[params.preset];
+      const activePreset = PRESETS[params.preset];
       const targetLabel = activePreset ? activePreset.name : 'Custom';
       if (labelEl.textContent !== targetLabel) labelEl.textContent = targetLabel;
     }
@@ -608,9 +400,6 @@
     }
   }
 
-  /**
-   * @function closePresetDropdown
-   */
   function closePresetDropdown() {
     const menu = document.getElementById('aisu-preset-menu');
     const trigger = document.getElementById('aisu-preset-trigger');
@@ -618,9 +407,6 @@
     if (trigger) trigger.setAttribute('aria-expanded', 'false');
   }
 
-  /**
-   * @function bindEventDelegation
-   */
   function bindEventDelegation() {
     if (window._aisuEventsBound) return;
     window._aisuEventsBound = true;
@@ -657,18 +443,18 @@
       if (range) {
         const prefix = range.getAttribute('data-prefix');
         const isFloat = range.getAttribute('data-float') === 'true';
-        const parsed = window.AISU.parseNumber(range.value, isFloat);
+        const parsed = parseNum(range.value, isFloat);
 
         const num = document.getElementById(`aisu-num-${prefix}`);
         if (num) num.value = String(parsed);
         updateSliderFill(range);
 
-        const params = window.AISU.loadCurrentParams();
+        const params = loadParams();
         params.preset = 'custom';
         if (prefix === 'mod-temp') params.temperature = parsed;
         if (prefix === 'mod-topp') params.topP = parsed;
         if (prefix === 'mod-topk') params.topK = parsed;
-        window.AISU.saveCurrentParams(params);
+        saveParams(params);
         syncInputsWithStorage();
         return;
       }
@@ -676,12 +462,12 @@
       const { nativeTempRange, nativeTopPRange } = getNativeControls();
       if (e.target === nativeTempRange || e.target === nativeTopPRange) {
         const isTemp = e.target === nativeTempRange;
-        const val = window.AISU.parseNumber(e.target.value, true);
-        const params = window.AISU.loadCurrentParams();
+        const val = parseNum(e.target.value, true);
+        const params = loadParams();
         params.preset = 'custom';
         if (isTemp) params.temperature = val;
         else params.topP = val;
-        window.AISU.saveCurrentParams(params);
+        saveParams(params);
         syncInputsWithStorage();
       }
     });
@@ -692,7 +478,7 @@
 
       const prefix = num.getAttribute('data-prefix');
       const isFloat = num.getAttribute('data-float') === 'true';
-      let parsed = window.AISU.parseNumber(num.value, isFloat);
+      let parsed = parseNum(num.value, isFloat);
 
       if (prefix === 'mod-temp') parsed = Math.max(0, Math.min(2, parsed));
       if (prefix === 'mod-topp') parsed = Math.max(0, Math.min(1, parsed));
@@ -705,33 +491,25 @@
         updateSliderFill(range);
       }
 
-      const params = window.AISU.loadCurrentParams();
+      const params = loadParams();
       params.preset = 'custom';
       if (prefix === 'mod-temp') params.temperature = parsed;
       if (prefix === 'mod-topp') params.topP = parsed;
       if (prefix === 'mod-topk') params.topK = parsed;
-      window.AISU.saveCurrentParams(params);
+      saveParams(params);
       syncInputsWithStorage();
     });
   }
 
-  /**
-   * @function reconcilePosition
-   * @param {HTMLElement} anchor
-   * @param {HTMLElement} target
-   */
   function reconcilePosition(anchor, target) {
     if (!anchor || !target || !anchor.parentNode) return;
     if (target.parentNode === anchor.parentNode && anchor.nextElementSibling === target) return;
     anchor.after(target);
   }
 
-  /**
-   * @function reconcileControls
-   */
   function reconcileControls() {
     const { nativeTempRange, nativeTopPRange, nativeTopPContainer } = getNativeControls();
-    const params = window.AISU.loadCurrentParams();
+    const params = loadParams();
     const presetGroup = document.getElementById('aisu-preset-group');
 
     // 1. Temperature Slider (Top Section)
@@ -763,7 +541,7 @@
       reconcilePosition(outputLengthItem, topPBlock);
     }
 
-    // 4. Top K Slider (Advanced Settings, immediately following Top P)
+    // 4. Top K Slider (Advanced Settings)
     const topKAnchor = nativeTopPContainer ||
                        document.getElementById('aisu-slider-block-mod-topp') ||
                        outputLengthItem;
@@ -777,14 +555,10 @@
     }
   }
 
-  /**
-   * @function injectInputs
-   */
   function injectInputs() {
-    injectStyles();
     bindEventDelegation();
 
-    const currentParams = window.AISU.loadCurrentParams();
+    const currentParams = loadParams();
     let presetGroup = document.getElementById('aisu-preset-group');
 
     if (!presetGroup || !presetGroup.isConnected) {
@@ -805,9 +579,6 @@
     syncInputsWithStorage();
   }
 
-  /**
-   * @function executeSync
-   */
   function executeSync() {
     if (isInternalMutation) return;
 
@@ -829,9 +600,6 @@
     }
   }
 
-  /**
-   * @function scheduleSync
-   */
   function scheduleSync() {
     if (rafSyncId !== null) return;
     rafSyncId = requestAnimationFrame(() => {
@@ -869,9 +637,13 @@
   }
 
   if (document.readyState === 'loading') {
-    window.addEventListener('DOMContentLoaded', bindSettingsObserver, { once: true });
+    window.addEventListener('DOMContentLoaded', () => {
+      bindSettingsObserver();
+      scheduleSync();
+    }, { once: true });
   } else {
     bindSettingsObserver();
+    scheduleSync();
   }
 
   const wrapHistory = (type) => {
@@ -894,6 +666,4 @@
     lastModelName = '';
     scheduleSync();
   });
-
-  scheduleSync();
 })();
