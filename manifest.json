@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "AI Studio Pro Suite",
+  "version": "1.1",
+  "description": "Granular sampling presets, native-aligned precision sliders, and render optimization for Google AI Studio.",
+  "host_permissions": ["https://aistudio.google.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://aistudio.google.com/*"],
+      "js": [
+        "storage.js",
+        "optimizer.js",
+        "interceptor.js",
+        "ui.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}
