@@ -7,7 +7,7 @@
 
 **AI Studio Pro Suite** is a lightweight Chrome extension for [Google AI Studio](https://aistudio.google.com).
 
-It brings back missing generation sliders (`Temperature`, `Top P`, `Top K`) on models that hide them (such as Gemini Flash with Thinking), provides 9 one-click sampling presets for coding, writing, and brainstorming, and seamlessly blends into the native Google UI with zero lag.
+It restores missing generation controls (`Temperature`, `Top P`, `Top K`) on models that hide them (such as Gemini Flash with Thinking), provides 8 empirically calibrated sampling presets based on ML benchmarks, adds a safe prompt dispatch confirmation toggle, auto-saves prompt drafts per chat, and integrates seamlessly into the native Google Material 3 UI with zero typing latency.
 
 ---
 
@@ -20,19 +20,27 @@ It brings back missing generation sliders (`Temperature`, `Top P`, `Top K`) on m
 
 ---
 
-### Quick Presets
+### Calibrated Presets
 
-| Preset                             | Best For                                       |  Temp  | Top P  | Top K |
-| :--------------------------------- | :--------------------------------------------- | :----: | :----: | :---: |
-| **Deterministic / Strict Code**    | Strict code, JSON schemas, unit tests          | `0.00` | `0.10` |  `1`  |
-| **Precise / Data Extraction**      | Fact extraction, summarization, tables         | `0.20` | `0.40` | `16`  |
-| **Academic & Technical**           | Research papers, formal analysis               | `0.45` | `0.70` | `24`  |
-| **Creative Code & Shaders**        | Shaders, game logic, procedural math           | `0.65` | `0.85` | `40`  |
-| **Balanced (Default)**             | Daily work, general assistant, chat            | `1.00` | `0.95` | `64`  |
-| **Conversational & Roleplay**      | Interactive characters, long-form dialog       | `1.15` | `0.92` | `64`  |
-| **Creative & Storytelling**        | Fiction, novels, worldbuilding                 | `1.40` | `0.95` | `80`  |
-| **Brainstorm & Ideation**          | Unconventional concepts, divergent ideas       | `1.75` | `0.98` | `100` |
-| **Maximum Entropy / Experimental** | Wild, chaotic, and artistic exploratory output | `2.00` | `1.00` | `128` |
+| Preset                                 | Best For                                           |  Temp  | Top P  | Top K |
+| :------------------------------------- | :------------------------------------------------- | :----: | :----: | :---: |
+| **Deterministic / Strict Code**        | Exact syntax, Zod/JSON schemas, SQL, unit tests    | `0.10` | `0.10` |  `1`  |
+| **Production Code & Architecture**     | Production development, refactoring, Clean Arch    | `0.30` | `0.75` | `32`  |
+| **Creative Code, Shaders & Math**      | Algorithmic search, WebGL/GLSL, Three.js, shaders  | `0.70` | `0.85` | `40`  |
+| **Balanced (Default)**                 | General assistant, daily tasks, balanced responses | `1.00` | `0.92` | `65`  |
+| **Creative Narrative & Worldbuilding** | Fiction novels, long-form dialogs, roleplay        | `1.10` | `0.92` | `65`  |
+| **Brainstorm & Avant-Garde**           | Ideation, conceptual poetry, brand naming          | `1.45` | `0.96` | `90`  |
+| **Dream Logic / Surrealism**           | Surrealism, dream sequences, creative stream       | `1.80` | `0.98` | `110` |
+| **Matrix Glitch / Pure Entropy**       | Maximum logit entropy, edge-case probing, glitch   | `2.00` | `1.00` | `128` |
+
+---
+
+### Key Capabilities
+
+- **Zero-Latency Typing Firewall**: Off-screen chat messages are culled from rendering pipelines via CSS `content-visibility: auto`. Fast-exit typing guards eliminate layout thrashing during input.
+- **Multi-RPC Network Hook**: Directly intercepts and patches outgoing payloads for `GenerateContent`, `CreatePrompt`, and `UpdatePrompt` RPC schemas, ensuring custom parameters take effect even on restricted models.
+- **Safe Send Confirmation**: Native M3 toggle switch prompts for explicit confirmation before triggering prompt execution via button or `Ctrl+Enter` / `Cmd+Enter`.
+- **Per-Chat Draft Persistence**: Automatically backs up uncommitted prompt drafts into local storage keyed by conversation ID.
 
 ---
 
@@ -47,25 +55,25 @@ It brings back missing generation sliders (`Temperature`, `Top P`, `Top K`) on m
 
 #### Option B: Build Release Package
 
-Run the zero-dependency build script to automatically generate minified distribution files and a release `.zip`:
+Run the zero-dependency build script to generate minified distribution files and a production archive:
 
 ```bash
 node build.js
 ```
 
-The script will read the version from `manifest.json` and generate:
+The script reads the version from `manifest.json` and outputs:
 
-- **`dist/`**: Clean, minified extension directory ready for manual loading.
+- **`dist/`**: Minified extension directory ready for deployment.
 - **`ai-studio-pro-suite-v<VERSION>.zip`**: Production archive ready for Chrome Web Store and GitHub Releases.
 
 ---
 
 ### Under the Hood (Technical Highlights)
 
-- **Zero Layout Jitter**: Elements are reconciled with DOM anchors without cyclic reflows or parent thrashing.
-- **Strict CSP / Trusted Types**: Pure DOM node generation (`createElement`, `createTextNode`) — 0% `innerHTML`.
-- **RPC Payload Hook**: Direct Protobuf/JSON injection via network hooks ensures parameters apply even when the native UI omits them.
-- **Hardware Containment**: Utilizes CSS `content-visibility: auto` to maintain 60 FPS in long chat sessions.
+- **Hardware Culling**: Utilizes `content-visibility: auto` with `contain-intrinsic-size` on `ms-chat-turn` to skip paint and layout computations for off-screen turns, preserving 60 FPS in 100+ turn chats.
+- **Layout Thrashing Prevention**: Bypasses Angular CDK TextareaAutosize layout conflicts by decoupling containment rules from the native input node.
+- **Zero InnerHTML Injection**: 100% compliant with strict CSP and Trusted Types via native DOM element synthesis (`createElement`, `createTextNode`).
+- **Debounced Observer**: MutationObserver is targeted specifically at run settings panels and suspended during rapid typing bursts.
 
 </details>
 
@@ -74,9 +82,9 @@ The script will read the version from `manifest.json` and generate:
 
 ### Что это такое?
 
-**AI Studio Pro Suite** — легкое расширение для [Google AI Studio](https://aistudio.google.com).
+**AI Studio Pro Suite** — легковесное расширение для [Google AI Studio](https://aistudio.google.com).
 
-Оно возвращает скрытые разработчиками ползунки (`Temperature`, `Top P`, `Top K`) в моделях, где их принудительно отключили (например, Gemini Flash с Thinking), добавляет 9 готовых пресетов в один клик под разные задачи и выглядит точь-в-точь как родной интерфейс Google без лагов.
+Оно возвращает скрытые разработчиками ползунки генерации (`Temperature`, `Top P`, `Top K`) в моделях, где они принудительно отключены (например, Gemini Flash с Thinking), добавляет 8 научно калиброванных пресетов под задачи разработки и текста, внедряет подтверждение отправки промпта, автоматически сохраняет черновики диалогов и полностью устраняет лаги ввода при объемных чатах.
 
 ---
 
@@ -89,19 +97,27 @@ The script will read the version from `manifest.json` and generate:
 
 ---
 
-### Готовые пресеты
+### Калиброванные пресеты
 
-| Пресет                             | Для каких задач                          |  Temp  | Top P  | Top K |
-| :--------------------------------- | :--------------------------------------- | :----: | :----: | :---: |
-| **Deterministic / Strict Code**    | Точный код, строгие JSON-схемы, тесты    | `0.00` | `0.10` |  `1`  |
-| **Precise / Data Extraction**      | Извлечение фактов, парсинг данных        | `0.20` | `0.40` | `16`  |
-| **Academic & Technical**           | Документация, научные статьи             | `0.45` | `0.70` | `24`  |
-| **Creative Code & Shaders**        | Шейдеры, игровая логика, алгоритмы       | `0.65` | `0.85` | `40`  |
-| **Balanced (Default)**             | Повседневные диалоги, аналитика          | `1.00` | `0.95` | `64`  |
-| **Conversational & Roleplay**      | Ролевые игры, живые персонажи            | `1.15` | `0.92` | `64`  |
-| **Creative & Storytelling**        | Сценарии, книги, художественный текст    | `1.40` | `0.95` | `80`  |
-| **Brainstorm & Ideation**          | Нестандартные идеи, брейншторм           | `1.75` | `0.98` | `100` |
-| **Maximum Entropy / Experimental** | Максимальная случайность, поиск аномалий | `2.00` | `1.00` | `128` |
+| Пресет                                 | Оптимальные сценарии                    |  Temp  | Top P  | Top K |
+| :------------------------------------- | :-------------------------------------- | :----: | :----: | :---: |
+| **Deterministic / Strict Code**        | Точный синтаксис, Zod/JSON-схемы, SQL   | `0.10` | `0.10` |  `1`  |
+| **Production Code & Architecture**     | Продакшн-код, рефакторинг, архитектура  | `0.30` | `0.75` | `32`  |
+| **Creative Code, Shaders & Math**      | Алгоритмический поиск, WebGL, Three.js  | `0.70` | `0.85` | `40`  |
+| **Balanced (Default)**                 | Базовый ассистент, повседневные задачи  | `1.00` | `0.92` | `65`  |
+| **Creative Narrative & Worldbuilding** | Сценарии, художественный текст, ролевые | `1.10` | `0.92` | `65`  |
+| **Brainstorm & Avant-Garde**           | Брейншторм, неологизмы, слоганы, питчи  | `1.45` | `0.96` | `90`  |
+| **Dream Logic / Surrealism**           | Сюрреализм, поток сознания, логика сна  | `1.80` | `0.98` | `110` |
+| **Matrix Glitch / Pure Entropy**       | Максимальная случайность, сбой логитов  | `2.00` | `1.00` | `128` |
+
+---
+
+### Функциональные возможности
+
+- **Устранение задержек ввода**: Внеэкранные сообщения чата отсекаются от пайплайна рендера браузера с помощью CSS `content-visibility: auto`. O(1)-гварды ввода блокируют лаги клавиатуры.
+- **Поддержка Multi-RPC**: Перехватчик модифицирует структуры вызовов `GenerateContent`, `CreatePrompt` и `UpdatePrompt` на уровне `fetch` и `XMLHttpRequest`, гарантируя применение параметров.
+- **Защита от случайной отправки**: Нативный переключатель Material 3 запрашивает подтверждение перед отправкой запроса кликом или комбинацией `Ctrl+Enter` / `Cmd+Enter`.
+- **Автосохранение черновиков**: Текст в поле ввода сохраняется с дебаунсом в `localStorage` с привязкой к идентификатору текущего чата.
 
 ---
 
@@ -109,31 +125,31 @@ The script will read the version from `manifest.json` and generate:
 
 #### Вариант А: Запуск из исходников
 
-1. Скачайте архив или склонируйте этот репозиторий.
-2. Откройте Chrome и перейдите по адресу `chrome://extensions/`.
-3. В правом верхнем углу включите **Режим разработчика** (Developer mode).
-4. Нажмите **Загрузить распакованное** (Load unpacked) и выберите папку проекта.
+1. Скачайте архив или склонируйте данный репозиторий.
+2. Откройте Google Chrome и перейдите по адресу `chrome://extensions/`.
+3. Включите **Режим разработчика** (Developer mode) в верхнем правом углу.
+4. Нажмите **Загрузить распакованное** (Load unpacked) и укажите папку проекта.
 
 #### Вариант Б: Сборка релизного пакета
 
-Запустите скрипт сборки без сторонних зависимостей (требуется только установленный Node.js):
+Запустите скрипт сборки без сторонних npm-зависимостей (требуется только Node.js):
 
 ```bash
 node build.js
 ```
 
-Скрипт автоматически прочитает версию из `manifest.json` и создаст:
+Скрипт прочитает актуальную версию из `manifest.json` и сгенерирует:
 
-- **`dist/`**: Чистую минифицированную папку для загрузки в браузер.
+- **`dist/`**: Чистую минифицированную папку для ручной загрузки.
 - **`ai-studio-pro-suite-v<ВЕРСИЯ>.zip`**: Готовый релизный архив для публикации в Chrome Web Store и GitHub Releases.
 
 ---
 
 ### Технические особенности
 
-- **Никаких дёрганий экрана**: Проверенное позиционирование элементов без циклических перерисовок (reflow).
-- **Безопасность (Trusted Types CSP)**: Генерация только через нативные ноды (`createElement`, `createTextNode`) — 0% использования `innerHTML`.
-- **Прямой перехват RPC**: Значения передаются напрямую в сетевой запрос Protobuf/JSON, даже если модель скрыла настройки из интерфейса.
-- **Оптимизация рендера**: CSS-изоляция `content-visibility: auto` сохраняет плавность 60 FPS даже в огромных диалогах.
+- **Аппаратное отсечение (Hardware Culling)**: CSS-изоляция `content-visibility: auto` с `contain-intrinsic-size` для `ms-chat-turn` полностью исключает расчет стилей и перерисовку скрытых блоков, сохраняя 60 FPS при 100+ сообщениях.
+- **Ликвидация Layout Thrashing**: Полное удаление конфликтующих правил `contain: layout` с поля ввода предотвращает принудительный перерасчет высоты Angular CDK TextareaAutosize при каждом нажатии клавиши.
+- **Безопасность (Strict CSP / Trusted Types)**: 0% использования `innerHTML`. Разметка создается строго через нативные вызовы `createElement` и `createTextNode`.
+- **Изоляция MutationObserver**: Наблюдатель подключается точечно к панели настроек с дебаунсом 500 мс и приостанавливает работу во время набора текста пользователем.
 
 </details>

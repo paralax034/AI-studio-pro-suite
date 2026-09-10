@@ -1,44 +1,60 @@
-/* AI Studio Pro Suite - Native M3 Stylesheet & Render Containment */
+/* AI Studio Pro Suite - Hardware Containment & Pixel-Perfect M3 Stylesheet */
 
+/* Layout Firewall & Hardware Culling */
 ms-chat-turn {
   content-visibility: auto;
-  contain-intrinsic-size: 0 160px;
+  contain-intrinsic-size: auto 240px;
+}
+
+ms-code-block {
+  contain: paint;
 }
 
 ms-thought-chunk {
-  contain: content;
+  contain: layout style;
 }
 
-ms-autoscroll-container,
-.chat-session-content {
-  will-change: transform;
-  transform: translateZ(0);
+ms-cmark-node {
+  contain: style;
 }
 
-textarea.cdk-textarea-autosize {
-  contain: layout paint;
-}
-
-:root {
-  --aisu-font: Inter, sans-serif;
-  --aisu-bg-surface: var(--color-v3-surface-container, #1f1f1f);
-  --aisu-bg-field: var(--color-v3-surface-container-high, #252525);
+/* System Design Tokens */
+:root,
+body.dark-theme,
+body.light-theme {
+  --aisu-font:
+    Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --aisu-bg-surface: var(--color-v3-surface-container, #1e1f20);
+  --aisu-bg-field: var(--color-v3-surface-container-high, #282a2c);
   --aisu-bg-hover: var(--color-v3-hover, #323232);
-  --aisu-bg-selected: var(--color-v3-surface-container-highest, #2a2a2a);
-  --aisu-border-subtle: var(--color-v3-outline-var, #262626);
-  --aisu-border-default: var(--color-v3-outline, #333333);
-  --aisu-border-active: var(--color-v3-outline-active, #b7babd);
-  --aisu-color-accent: var(--color-v3-text, #d4d4d4);
-  --aisu-text-primary: var(--color-v3-text, #d4d4d4);
-  --aisu-text-secondary: var(--color-v3-text-var, #8c8c8c);
-  --aisu-shadow-dropdown: var(--v3-shadow-dropdown, 0 4px 8px 3px rgba(0,0,0,0.05), 0 1px 3px 0 rgba(0,0,0,0.15));
+  --aisu-bg-selected: var(--color-v3-surface-container-highest, #333537);
+  --aisu-border-subtle: var(--color-v3-outline-var, #333537);
+  --aisu-border-default: var(--color-v3-outline, #444748);
+  --aisu-border-active: var(--color-v3-outline-active, #747878);
+  --aisu-color-slider: var(--color-v3-text, #e5e2e1);
+  --aisu-text-primary: var(--color-v3-text, #e5e2e1);
+  --aisu-text-secondary: var(--color-v3-text-var, #c4c7c7);
+  --aisu-track-inactive: var(--color-v3-surface-container-highest, #333537);
+  --aisu-shadow-dropdown: var(
+    --v3-shadow-dropdown,
+    0 4px 8px 3px rgba(0, 0, 0, 0.25)
+  );
 }
 
 .aisu-field-group {
   border-bottom: 1px solid var(--aisu-border-subtle);
-  padding: clamp(6px, 1vw, 10px) 0;
+  padding: 8px 0;
   width: 100%;
   box-sizing: border-box;
+}
+
+.aisu-field-title {
+  font-family: var(--aisu-font);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  color: var(--aisu-text-primary);
+  margin: 0 0 6px 0;
 }
 
 .aisu-select {
@@ -65,7 +81,9 @@ textarea.cdk-textarea-autosize {
   cursor: pointer;
   user-select: none;
   box-sizing: border-box;
-  transition: border-color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+  transition:
+    border-color 0.15s ease-in-out,
+    background-color 0.15s ease-in-out;
 }
 
 .aisu-select__trigger:hover {
@@ -74,6 +92,10 @@ textarea.cdk-textarea-autosize {
 
 .aisu-select__trigger[aria-expanded="true"] {
   border-color: var(--aisu-border-active);
+}
+
+.aisu-select__trigger[aria-expanded="true"] .aisu-select__arrow {
+  transform: rotate(180deg);
 }
 
 .aisu-select__label {
@@ -86,11 +108,7 @@ textarea.cdk-textarea-autosize {
 .aisu-select__arrow {
   flex-shrink: 0;
   color: var(--aisu-text-primary);
-  transition: transform 0.2s ease;
-}
-
-.aisu-select__trigger[aria-expanded="true"] .aisu-select__arrow {
-  transform: rotate(180deg);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .aisu-select__menu {
@@ -157,11 +175,81 @@ textarea.cdk-textarea-autosize {
   letter-spacing: 0.2px;
 }
 
+/* Native-identical Material 3 Slide Toggle for Confirm */
+.aisu-confirm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 0 2px 0;
+  box-sizing: border-box;
+}
+
+.aisu-confirm-title {
+  font-family: var(--aisu-font);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  color: var(--aisu-text-primary);
+  margin: 0;
+}
+
+.aisu-switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 20px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.aisu-switch__input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.aisu-switch__track {
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  background-color: var(--aisu-track-inactive);
+  border: 1px solid var(--color-v3-outline, #747878);
+  transition:
+    background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.2s ease;
+}
+
+.aisu-switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: var(--aisu-text-secondary, #8e9192);
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.2s ease;
+}
+
+.aisu-switch__input:checked + .aisu-switch__track {
+  background-color: var(--aisu-color-slider, #e5e2e1);
+  border-color: var(--aisu-color-slider, #e5e2e1);
+}
+
+.aisu-switch__input:checked + .aisu-switch__track .aisu-switch__thumb {
+  transform: translateX(14px);
+  background-color: var(--aisu-bg-surface, #1e1f20);
+}
+
+/* Sliders */
 .aisu-slider-item {
   display: flex;
   flex-direction: column;
   width: 100%;
-  padding: clamp(6px, 1vw, 8px) 0;
+  padding: 6px 0;
   box-sizing: border-box;
 }
 
@@ -187,7 +275,7 @@ textarea.cdk-textarea-autosize {
   align-items: center;
   gap: 12px;
   width: 100%;
-  min-height: 44px;
+  min-height: 40px;
 }
 
 .aisu-slider-row__track-container {
@@ -195,15 +283,15 @@ textarea.cdk-textarea-autosize {
   flex: 1;
   display: flex;
   align-items: center;
-  min-height: 44px;
+  min-height: 40px;
 }
 
 .aisu-slider-row__range {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  min-height: 44px;
-  height: 44px;
+  min-height: 40px;
+  height: 40px;
   margin: 0;
   background: transparent;
   cursor: pointer;
@@ -218,42 +306,42 @@ textarea.cdk-textarea-autosize {
   border-radius: 2px;
   background: linear-gradient(
     to right,
-    var(--aisu-color-accent) 0%,
-    var(--aisu-color-accent) var(--aisu-progress, 50%),
-    var(--aisu-border-default) var(--aisu-progress, 50%),
-    var(--aisu-border-default) 100%
+    var(--aisu-color-slider) 0%,
+    var(--aisu-color-slider) var(--aisu-progress, 50%),
+    var(--aisu-track-inactive) var(--aisu-progress, 50%),
+    var(--aisu-track-inactive) 100%
   );
 }
 
 .aisu-slider-row__range::-moz-range-track {
   height: 4px;
   border-radius: 2px;
-  background: var(--aisu-border-default);
+  background: var(--aisu-track-inactive);
 }
 
 .aisu-slider-row__range::-moz-range-progress {
   height: 4px;
   border-radius: 2px;
-  background: var(--aisu-color-accent);
+  background: var(--aisu-color-slider);
 }
 
 .aisu-slider-row__range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
-  margin-top: -5px;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
   border-radius: 50%;
-  background: var(--aisu-color-accent);
+  background: var(--aisu-color-slider);
   border: none;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 .aisu-slider-row__range::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--aisu-color-accent);
+  background: var(--aisu-color-slider);
   border: none;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
@@ -262,20 +350,20 @@ textarea.cdk-textarea-autosize {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 48px;
-  min-height: 44px;
+  min-width: 52px;
+  min-height: 40px;
 }
 
 .aisu-slider-row__input {
-  width: 48px;
-  min-width: 48px;
+  width: 52px;
+  min-width: 52px;
   height: 28px;
-  background-color: transparent;
+  background-color: var(--aisu-bg-field);
   border: 1px solid var(--aisu-border-subtle);
   border-radius: 8px;
   color: var(--aisu-text-primary);
   font-family: var(--aisu-font);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 400;
   line-height: 18px;
   text-align: center;
