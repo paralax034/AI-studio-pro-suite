@@ -2,17 +2,11 @@
 
 /**
  * AI Studio Pro Suite
- * Core Runtime: Zero-Jank Typing Guard, 500ms Debounce,
- * Preference-Direct Model Resolver & Multi-RPC Interceptor.
  */
 (function () {
   if (window.__AISU_INITIALIZED__) return;
   window.__AISU_INITIALIZED__ = true;
 
-  /**
-   * Generation sampling presets dictionary.
-   * @type {Record<string, { name: string, temp: number, topP: number, topK: number }>}
-   */
   const PRESETS = {
     code_strict: {
       name: "Deterministic / Strict Code",
@@ -35,14 +29,14 @@
     balance: {
       name: "Balanced (Default)",
       temp: 1.0,
-      topP: 0.92,
-      topK: 65,
+      topP: 0.95,
+      topK: 64,
     },
     creative_story: {
       name: "Creative Narrative & Worldbuilding",
       temp: 1.1,
-      topP: 0.92,
-      topK: 65,
+      topP: 0.95,
+      topK: 64,
     },
     creative_brainstorm: {
       name: "Brainstorm & Avant-Garde",
@@ -64,7 +58,6 @@
     },
   };
 
-  /** @type {{ preset: string, temperature: number, topP: number, topK: number, confirmSend: boolean }} */
   const DEFAULT_PARAMS = {
     preset: "balance",
     temperature: PRESETS.balance.temp,
@@ -82,10 +75,6 @@
   let draftDebounceTimer = null;
   let activeModelIdCache = "";
 
-  /**
-   * Reads canonical active model synchronously from AI Studio preferences.
-   * @returns {string}
-   */
   function getActiveModelId() {
     try {
       const prefRaw = localStorage.getItem("aiStudioUserPreference");
@@ -99,9 +88,7 @@
           return pref.promptModel.replace(/^models\//, "").toLowerCase();
         }
       }
-    } catch {
-      // Fallback to DOM
-    }
+    } catch {}
 
     const card =
       document.querySelector("ms-run-settings .model-selector-card") ||
@@ -121,7 +108,7 @@
       }
     }
 
-    return "gemini-default";
+    return "gemini-3.8-flash";
   }
 
   function getStorageKey(specificModelId) {
@@ -179,7 +166,7 @@
     }
   }
 
-  // --- Multi-RPC Network Interceptor ---
+  // --- Precision Protobuf RPC Interceptor ---
 
   function isTargetRpc(url) {
     if (!url || typeof url !== "string") return false;
@@ -190,82 +177,65 @@
     );
   }
 
-  function patchPayloadRecursive(root) {
-    if (!root) return false;
-    let modified = false;
+  /**
+   * Patches outgoing Protobuf array with 100% schema fidelity.
+   */
+  function patchPayloadSafe(root) {
+    if (!root || !Array.isArray(root)) return false;
 
-    if (Array.isArray(root)) {
-      // Schema A (GenerateContent)
-      if (typeof root[0] === "string" && root[0].startsWith("models/")) {
-        const modelId = root[0].replace(/^models\//, "").toLowerCase();
-        const params = loadParams(modelId);
-        let cfg = root[3];
+    // 1. GenerateContent Schema
+    // root = ["models/gemini-...", [contents], [safety], [generationConfig], ...]
+    if (typeof root[0] === "string" && root[0].startsWith("models/")) {
+      const modelId = root[0].replace(/^models\//, "").toLowerCase();
+      const params = loadParams(modelId);
 
-        if (!Array.isArray(cfg)) {
-          cfg = [null, null, null, null, null, null, null];
-          root[3] = cfg;
-        }
-
-        while (cfg.length < 7) {
-          cfg.push(null);
-        }
-
-        cfg[4] = params.temperature;
-        cfg[5] = params.topP;
-        cfg[6] = params.topK;
-        modified = true;
+      if (Array.isArray(root[3]) && root[3].length >= 7) {
+        // Точечно меняем только 3 индекса, оставляя Thinking Config [16] в полной сохранности!
+        root[3][4] = params.temperature;
+        root[3][5] = params.topP;
+        root[3][6] = params.topK;
+        return true;
       }
+      return false;
+    }
 
-      // Schema B (CreatePrompt & UpdatePrompt)
-      if (
-        root.length >= 6 &&
-        typeof root[2] === "string" &&
-        root[2].startsWith("models/")
-      ) {
-        const modelId = root[2].replace(/^models\//, "").toLowerCase();
+    // 2. CreatePrompt / UpdatePrompt Schema
+    // root = [[null, null, null, [temp, null, "models/...", null, topP, topK, maxTokens, ...], ...]]
+    if (Array.isArray(root[0]) && Array.isArray(root[0][3])) {
+      const cfg = root[0][3];
+      if (typeof cfg[2] === "string" && cfg[2].startsWith("models/")) {
+        const modelId = cfg[2].replace(/^models\//, "").toLowerCase();
         const params = loadParams(modelId);
 
-        root[0] = params.temperature;
-        root[4] = params.topP;
-        root[5] = params.topK;
-        modified = true;
-      }
-
-      for (let i = 0; i < root.length; i++) {
-        if (typeof root[i] === "object" && root[i] !== null) {
-          if (patchPayloadRecursive(root[i])) modified = true;
-        }
-      }
-    } else if (typeof root === "object") {
-      for (const k of Object.keys(root)) {
-        const val = root[k];
-        if (typeof val === "object" && val !== null) {
-          if (patchPayloadRecursive(val)) modified = true;
-        }
+        cfg[0] = params.temperature;
+        cfg[4] = params.topP;
+        cfg[5] = params.topK;
+        return true;
       }
     }
 
-    return modified;
+    return false;
   }
 
   function modifyPayload(rawBody) {
     if (!rawBody || typeof rawBody !== "string") return rawBody;
 
+    const trimmed = rawBody.trim();
+    if (!trimmed.startsWith("[")) {
+      return rawBody;
+    }
+
     try {
-      const body = JSON.parse(rawBody);
-      const isPatched = patchPayloadRecursive(body);
+      const body = JSON.parse(trimmed);
+      const isPatched = patchPayloadSafe(body);
 
       if (isPatched) {
         try {
           localStorage.removeItem(getChatDraftKey());
-        } catch {
-          // Ignore
-        }
+        } catch {}
         return JSON.stringify(body);
       }
-    } catch (error) {
-      console.warn("[AISU] Payload modification skipped:", error);
-    }
+    } catch {}
     return rawBody;
   }
 
@@ -302,16 +272,13 @@
         try {
           const raw = await input.clone().text();
           input = new Request(input, { body: modifyPayload(raw) });
-        } catch {
-          // Pass-through
-        }
+        } catch {}
       }
     }
     return nativeFetch.call(this, input, init);
   };
 
-  // --- Non-Blocking Draft Auto-Save ---
-
+  // --- Draft Auto-Save ---
   function scheduleDraftSave(text) {
     if (draftDebounceTimer) clearTimeout(draftDebounceTimer);
     draftDebounceTimer = setTimeout(() => {
@@ -323,11 +290,9 @@
           } else {
             localStorage.removeItem(key);
           }
-        } catch {
-          // Quota
-        }
+        } catch {}
       });
-    }, 1500);
+    }, 1200);
   }
 
   function restorePromptDraft() {
@@ -346,21 +311,18 @@
         textarea.value = savedDraft;
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
       }
-    } catch {
-      // Ignore
-    }
+    } catch {}
   }
 
-  // --- Safe Send Confirmation ---
-
-  function handleSendConfirmation(e, executeCallback) {
-    if (isConfirmedExecution) return;
+  // --- Confirmation Interceptor ---
+  function interceptSendWithConfirmation(e, runAction) {
     const params = loadParams();
 
     if (!params.confirmSend) {
-      executeCallback();
-      return;
+      return; // Отдаем управление штатному обработчику Google
     }
+
+    if (isConfirmedExecution) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -370,20 +332,20 @@
     const confirmed = window.confirm(
       `[AI Studio Pro Suite]\n\nSend prompt to model "${modelId}"?`,
     );
+
     if (confirmed) {
       isConfirmedExecution = true;
       try {
-        executeCallback();
+        runAction();
       } finally {
         setTimeout(() => {
           isConfirmedExecution = false;
-        }, 150);
+        }, 200);
       }
     }
   }
 
-  // --- UI Builder Utilities ---
-
+  // --- UI Builders ---
   function createEl(tag, props = {}, ...children) {
     const el =
       tag === "svg" || tag === "path"
@@ -646,7 +608,6 @@
       ),
     );
 
-    // Native Material 3 Slide Toggle for Confirm
     const toggleSwitch = createEl(
       "div",
       { className: "settings-item aisu-confirm-row", "data-aisu": "true" },
@@ -830,13 +791,11 @@
     if (trigger) trigger.setAttribute("aria-expanded", "false");
   }
 
-  // --- Event Delegation with O(1) Typing Guard ---
-
+  // --- Event Delegation ---
   function bindEventDelegation() {
     if (window._aisuEventsBound) return;
     window._aisuEventsBound = true;
 
-    // Capture-phase model select click
     document.addEventListener(
       "click",
       (e) => {
@@ -855,7 +814,6 @@
       true,
     );
 
-    // Capture-phase Run button interceptor for confirmation
     document.addEventListener(
       "click",
       (e) => {
@@ -866,7 +824,7 @@
           "ms-run-button button, button.ctrl-enter-submits",
         );
         if (runBtn && runBtn instanceof HTMLButtonElement) {
-          handleSendConfirmation(e, () => {
+          interceptSendWithConfirmation(e, () => {
             runBtn.click();
           });
         }
@@ -874,13 +832,11 @@
       true,
     );
 
-    // Capture-phase keyboard interceptor (Ctrl+Enter / Meta+Enter)
     document.addEventListener(
       "keydown",
       (e) => {
         const target = /** @type {HTMLElement | null} */ (e.target);
 
-        // O(1) Fast typing guard for prompt box
         if (target && target.nodeName === "TEXTAREA") {
           isUserTyping = true;
           if (typingTimer) clearTimeout(typingTimer);
@@ -891,15 +847,18 @@
 
         if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
           if (target && target.nodeName === "TEXTAREA") {
-            const runBtn = /** @type {HTMLButtonElement | null} */ (
-              document.querySelector(
-                "ms-run-button button, button.ctrl-enter-submits",
-              )
-            );
-            if (runBtn) {
-              handleSendConfirmation(e, () => {
-                runBtn.click();
-              });
+            const params = loadParams();
+            if (params.confirmSend) {
+              const runBtn = /** @type {HTMLButtonElement | null} */ (
+                document.querySelector(
+                  "ms-run-button button, button.ctrl-enter-submits",
+                )
+              );
+              if (runBtn) {
+                interceptSendWithConfirmation(e, () => {
+                  runBtn.click();
+                });
+              }
             }
           }
         }
@@ -937,12 +896,10 @@
       }
     });
 
-    // Zero-lag input guard & non-blocking draft auto-save
     document.addEventListener("input", (e) => {
       const target = /** @type {HTMLElement | null} */ (e.target);
       if (!target) return;
 
-      // O(1) Fast exit on prompt typing: save draft and exit immediately
       if (target.nodeName === "TEXTAREA") {
         isUserTyping = true;
         if (typingTimer) clearTimeout(typingTimer);
@@ -1068,7 +1025,7 @@
     const params = loadParams();
     const presetGroup = document.getElementById("aisu-preset-group");
 
-    // 1. Temperature slider block
+    // 1. Temperature: ВСЕГДА выводим, если Google скрыл нативный ползунок (в том числе для 3.8 Flash!)
     const customTemp = document.getElementById("aisu-slider-block-mod-temp");
     if (nativeTempRange) {
       if (customTemp) customTemp.remove();
@@ -1088,14 +1045,14 @@
       reconcilePosition(presetGroup, tempBlock);
     }
 
-    // 2. Output length anchor block
+    // 2. Output length anchor
     const outputLengthItem =
       document.querySelector(".settings-item.output-length") ||
       document
         .querySelector('input[name="maxOutputTokens"]')
         ?.closest(".settings-item");
 
-    // 3. Top P slider block
+    // 3. Top P
     const customTopP = document.getElementById("aisu-slider-block-mod-topp");
     if (nativeTopPRange) {
       if (customTopP) customTopP.remove();
@@ -1115,7 +1072,7 @@
       reconcilePosition(outputLengthItem, topPBlock);
     }
 
-    // 4. Top K slider block
+    // 4. Top K
     const topKAnchor =
       nativeTopPContainer ||
       document.getElementById("aisu-slider-block-mod-topp") ||
@@ -1211,7 +1168,6 @@
     }, delay);
   }
 
-  // --- Observer strictly monitoring Model Selector Card with 500ms Debounce ---
   const settingsObserver = new MutationObserver((mutations) => {
     if (isInternalMutation || isUserTyping) return;
 
@@ -1225,7 +1181,6 @@
           : target.parentElement;
       if (!el) continue;
 
-      // Only re-sync when model card changes; completely ignore token counters and chat content
       if (
         el.closest(
           ".model-selector-card, .selector-container, ms-model-selector",
@@ -1273,9 +1228,7 @@
     if (document.readyState === "loading") {
       document.addEventListener(
         "DOMContentLoaded",
-        () => {
-          bindDedicatedObserver();
-        },
+        () => bindDedicatedObserver(),
         { once: true },
       );
     }
@@ -1283,7 +1236,6 @@
 
   bootstrap();
 
-  // Navigation hooks
   const wrapHistory = (type) => {
     const orig = history[type];
     return function (...args) {

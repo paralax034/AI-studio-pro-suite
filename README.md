@@ -7,7 +7,7 @@
 
 **AI Studio Pro Suite** is a lightweight Chrome extension for [Google AI Studio](https://aistudio.google.com).
 
-It restores missing generation controls (`Temperature`, `Top P`, `Top K`) on models that hide them (such as Gemini Flash with Thinking), provides 8 empirically calibrated sampling presets based on ML benchmarks, adds a safe prompt dispatch confirmation toggle, auto-saves prompt drafts per chat, and integrates seamlessly into the native Google Material 3 UI with zero typing latency.
+It restores missing generation controls (`Temperature`, `Top P`, `Top K`) on models that hide them (such as Gemini 3.x Flash with Thinking/Reasoning), provides 8 empirically calibrated sampling presets based on ML benchmarks, adds a safe prompt dispatch confirmation toggle, auto-saves prompt drafts per chat, and integrates seamlessly into the native Google Material 3 UI with zero typing latency.
 
 ---
 
@@ -24,11 +24,11 @@ It restores missing generation controls (`Temperature`, `Top P`, `Top K`) on mod
 
 | Preset                                 | Best For                                           |  Temp  | Top P  | Top K |
 | :------------------------------------- | :------------------------------------------------- | :----: | :----: | :---: |
-| **Deterministic / Strict Code**        | Exact syntax, Zod/JSON schemas, SQL, unit tests    | `0.10` | `0.10` |  `1`  |
+| **Deterministic / Strict Code**        | Exact syntax, Zod/JSON schemas, SQL, unit tests    | `0.10` | `0.10` |  `4`  |
 | **Production Code & Architecture**     | Production development, refactoring, Clean Arch    | `0.30` | `0.75` | `32`  |
 | **Creative Code, Shaders & Math**      | Algorithmic search, WebGL/GLSL, Three.js, shaders  | `0.70` | `0.85` | `40`  |
-| **Balanced (Default)**                 | General assistant, daily tasks, balanced responses | `1.00` | `0.92` | `65`  |
-| **Creative Narrative & Worldbuilding** | Fiction novels, long-form dialogs, roleplay        | `1.10` | `0.92` | `65`  |
+| **Balanced (Default)**                 | General assistant, daily tasks, balanced responses | `1.00` | `0.95` | `64`  |
+| **Creative Narrative & Worldbuilding** | Fiction novels, long-form dialogs, roleplay        | `1.10` | `0.95` | `64`  |
 | **Brainstorm & Avant-Garde**           | Ideation, conceptual poetry, brand naming          | `1.45` | `0.96` | `90`  |
 | **Dream Logic / Surrealism**           | Surrealism, dream sequences, creative stream       | `1.80` | `0.98` | `110` |
 | **Matrix Glitch / Pure Entropy**       | Maximum logit entropy, edge-case probing, glitch   | `2.00` | `1.00` | `128` |
@@ -37,8 +37,8 @@ It restores missing generation controls (`Temperature`, `Top P`, `Top K`) on mod
 
 ### Key Capabilities
 
-- **Zero-Latency Typing Firewall**: Off-screen chat messages are culled from rendering pipelines via CSS `content-visibility: auto`. Fast-exit typing guards eliminate layout thrashing during input.
-- **Multi-RPC Network Hook**: Directly intercepts and patches outgoing payloads for `GenerateContent`, `CreatePrompt`, and `UpdatePrompt` RPC schemas, ensuring custom parameters take effect even on restricted models.
+- **Zero-Latency Typing Firewall**: Fast-exit typing guards and debounced state loops eliminate layout thrashing during rapid user input.
+- **Precision Multi-RPC Protobuf Patcher**: Directly intercepts and patches outgoing payloads for `GenerateContent`, `CreatePrompt`, and `UpdatePrompt` RPC schemas, ensuring custom parameters take effect without corrupting internal model configs (such as Thinking Config indexes).
 - **Safe Send Confirmation**: Native M3 toggle switch prompts for explicit confirmation before triggering prompt execution via button or `Ctrl+Enter` / `Cmd+Enter`.
 - **Per-Chat Draft Persistence**: Automatically backs up uncommitted prompt drafts into local storage keyed by conversation ID.
 
@@ -70,10 +70,9 @@ The script reads the version from `manifest.json` and outputs:
 
 ### Under the Hood (Technical Highlights)
 
-- **Hardware Culling**: Utilizes `content-visibility: auto` with `contain-intrinsic-size` on `ms-chat-turn` to skip paint and layout computations for off-screen turns, preserving 60 FPS in 100+ turn chats.
-- **Layout Thrashing Prevention**: Bypasses Angular CDK TextareaAutosize layout conflicts by decoupling containment rules from the native input node.
+- **Layout Thrashing Prevention**: Bypasses Angular CDK TextareaAutosize layout conflicts by decoupling containment rules from the native input node and guarding against reflow loops.
 - **Zero InnerHTML Injection**: 100% compliant with strict CSP and Trusted Types via native DOM element synthesis (`createElement`, `createTextNode`).
-- **Debounced Observer**: MutationObserver is targeted specifically at run settings panels and suspended during rapid typing bursts.
+- **Targeted MutationObserver**: Optimized observer specifically tracking model panels and run settings with built-in pause states during typing bursts.
 
 </details>
 
@@ -84,7 +83,7 @@ The script reads the version from `manifest.json` and outputs:
 
 **AI Studio Pro Suite** — легковесное расширение для [Google AI Studio](https://aistudio.google.com).
 
-Оно возвращает скрытые разработчиками ползунки генерации (`Temperature`, `Top P`, `Top K`) в моделях, где они принудительно отключены (например, Gemini Flash с Thinking), добавляет 8 научно калиброванных пресетов под задачи разработки и текста, внедряет подтверждение отправки промпта, автоматически сохраняет черновики диалогов и полностью устраняет лаги ввода при объемных чатах.
+Оно возвращает скрытые разработчиками ползунки генерации (`Temperature`, `Top P`, `Top K`) в моделях, где они принудительно отключены (например, Gemini 3.x Flash с режимом Thinking/Reasoning), добавляет 8 научно калиброванных пресетов под задачи разработки и текста, внедряет подтверждение отправки промпта, автоматически сохраняет черновики диалогов и полностью устраняет лаги ввода при объемных чатах.
 
 ---
 
@@ -101,11 +100,11 @@ The script reads the version from `manifest.json` and outputs:
 
 | Пресет                                 | Оптимальные сценарии                    |  Temp  | Top P  | Top K |
 | :------------------------------------- | :-------------------------------------- | :----: | :----: | :---: |
-| **Deterministic / Strict Code**        | Точный синтаксис, Zod/JSON-схемы, SQL   | `0.10` | `0.10` |  `1`  |
+| **Deterministic / Strict Code**        | Точный синтаксис, Zod/JSON-схемы, SQL   | `0.10` | `0.10` |  `4`  |
 | **Production Code & Architecture**     | Продакшн-код, рефакторинг, архитектура  | `0.30` | `0.75` | `32`  |
 | **Creative Code, Shaders & Math**      | Алгоритмический поиск, WebGL, Three.js  | `0.70` | `0.85` | `40`  |
-| **Balanced (Default)**                 | Базовый ассистент, повседневные задачи  | `1.00` | `0.92` | `65`  |
-| **Creative Narrative & Worldbuilding** | Сценарии, художественный текст, ролевые | `1.10` | `0.92` | `65`  |
+| **Balanced (Default)**                 | Базовый ассистент, повседневные задачи  | `1.00` | `0.95` | `64`  |
+| **Creative Narrative & Worldbuilding** | Сценарии, художественный текст, ролевые | `1.10` | `0.95` | `64`  |
 | **Brainstorm & Avant-Garde**           | Брейншторм, неологизмы, слоганы, питчи  | `1.45` | `0.96` | `90`  |
 | **Dream Logic / Surrealism**           | Сюрреализм, поток сознания, логика сна  | `1.80` | `0.98` | `110` |
 | **Matrix Glitch / Pure Entropy**       | Максимальная случайность, сбой логитов  | `2.00` | `1.00` | `128` |
@@ -114,8 +113,8 @@ The script reads the version from `manifest.json` and outputs:
 
 ### Функциональные возможности
 
-- **Устранение задержек ввода**: Внеэкранные сообщения чата отсекаются от пайплайна рендера браузера с помощью CSS `content-visibility: auto`. O(1)-гварды ввода блокируют лаги клавиатуры.
-- **Поддержка Multi-RPC**: Перехватчик модифицирует структуры вызовов `GenerateContent`, `CreatePrompt` и `UpdatePrompt` на уровне `fetch` и `XMLHttpRequest`, гарантируя применение параметров.
+- **Устранение задержек ввода**: Быстрые гварды ввода и дебаунс-петли состояния эффективно пресекают зависания интерфейса при наборе текста.
+- **Точный Multi-RPC Protobuf-патчер**: Безопасный перехват и модификация запросов `GenerateContent`, `CreatePrompt` и `UpdatePrompt` на уровне сетевых вызовов с сохранением служебных параметров модели (например, конфигураций Thinking).
 - **Защита от случайной отправки**: Нативный переключатель Material 3 запрашивает подтверждение перед отправкой запроса кликом или комбинацией `Ctrl+Enter` / `Cmd+Enter`.
 - **Автосохранение черновиков**: Текст в поле ввода сохраняется с дебаунсом в `localStorage` с привязкой к идентификатору текущего чата.
 
@@ -147,9 +146,8 @@ node build.js
 
 ### Технические особенности
 
-- **Аппаратное отсечение (Hardware Culling)**: CSS-изоляция `content-visibility: auto` с `contain-intrinsic-size` для `ms-chat-turn` полностью исключает расчет стилей и перерисовку скрытых блоков, сохраняя 60 FPS при 100+ сообщениях.
-- **Ликвидация Layout Thrashing**: Полное удаление конфликтующих правил `contain: layout` с поля ввода предотвращает принудительный перерасчет высоты Angular CDK TextareaAutosize при каждом нажатии клавиши.
+- **Ликвидация Layout Thrashing**: Полное устранение конфликтов с Angular CDK TextareaAutosize за счет изоляции контейнеров ввода от принудительных пересчетов высоты.
 - **Безопасность (Strict CSP / Trusted Types)**: 0% использования `innerHTML`. Разметка создается строго через нативные вызовы `createElement` и `createTextNode`.
-- **Изоляция MutationObserver**: Наблюдатель подключается точечно к панели настроек с дебаунсом 500 мс и приостанавливает работу во время набора текста пользователем.
+- **Изоляция MutationObserver**: Целевой наблюдатель следит за изменениями панели настроек и автоматически приостанавливает циклы синхронизации во время активного набора текста пользователем.
 
 </details>
