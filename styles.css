@@ -1,9 +1,12 @@
 /* AI Studio Pro Suite */
 
 ms-chat-session,
-.chat-session-content,
+.chat-session-content {
+  contain: paint;
+}
+
 ms-autoscroll-container {
-  contain: layout;
+  contain: none;
 }
 
 .prompt-box-container,
@@ -14,20 +17,20 @@ textarea.cdk-textarea-autosize {
 
 ms-chat-turn {
   content-visibility: auto;
-  contain-intrinsic-size: 1px 180px;
-  contain: layout style;
+  contain-intrinsic-size: auto 300px;
+}
+
+ms-chat-turn:has(ms-file-chunk),
+ms-chat-turn:has(.thumbnail-img),
+ms-chat-turn:last-child {
+  content-visibility: visible;
+  contain: none;
 }
 
 ms-thought-chunk
   .mat-expansion-panel:not(.mat-expanded)
   .mat-expansion-panel-content {
   display: none !important;
-}
-
-body:has(textarea.cdk-textarea-autosize:focus)
-  ms-chat-turn:not(:nth-last-child(-n + 4)) {
-  content-visibility: hidden !important;
-  pointer-events: none !important;
 }
 
 :root,

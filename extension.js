@@ -7,74 +7,164 @@
   if (window.__AISU_INITIALIZED__) return;
   window.__AISU_INITIALIZED__ = true;
 
-  const PRESETS = {
-    code_strict: {
+  /**
+   * @typedef {Object} SamplingPreset
+   * @property {string} name
+   * @property {number} temp
+   * @property {number} topP
+   * @property {number} topK
+   */
+
+  /** @type {Record<string, SamplingPreset>} */
+  const PRESETS = Object.freeze({
+    code_strict: Object.freeze({
       name: "Deterministic / Strict Code",
       temp: 0.1,
       topP: 0.1,
       topK: 4,
-    },
-    code_prod: {
+    }),
+    code_prod: Object.freeze({
       name: "Production Code & Architecture",
       temp: 0.3,
       topP: 0.75,
       topK: 32,
-    },
-    code_creative: {
+    }),
+    code_creative: Object.freeze({
       name: "Creative Code, Shaders & Math",
       temp: 0.7,
       topP: 0.85,
       topK: 40,
-    },
-    balance: {
+    }),
+    balance: Object.freeze({
       name: "Balanced (Default)",
       temp: 1.0,
       topP: 0.95,
       topK: 64,
-    },
-    creative_story: {
+    }),
+    creative_story: Object.freeze({
       name: "Creative Narrative & Worldbuilding",
       temp: 1.1,
       topP: 0.95,
       topK: 64,
-    },
-    creative_brainstorm: {
+    }),
+    creative_brainstorm: Object.freeze({
       name: "Brainstorm & Avant-Garde",
       temp: 1.45,
       topP: 0.96,
       topK: 90,
-    },
-    fun_dream: {
+    }),
+    fun_dream: Object.freeze({
       name: "Dream Logic / Surrealism",
       temp: 1.8,
       topP: 0.98,
       topK: 110,
-    },
-    fun_entropy: {
+    }),
+    fun_entropy: Object.freeze({
       name: "Matrix Glitch / Pure Entropy",
       temp: 2.0,
       topP: 1.0,
       topK: 128,
-    },
-  };
+    }),
+  });
 
-  const DEFAULT_PARAMS = {
+  const DEFAULT_PARAMS = Object.freeze({
     preset: "balance",
     temperature: PRESETS.balance.temp,
     topP: PRESETS.balance.topP,
     topK: PRESETS.balance.topK,
     confirmSend: false,
-  };
+  });
 
+  // State synchronization flags
   let isInternalMutation = false;
   let isProgrammaticChange = false;
   let isConfirmedExecution = false;
   let isUserTyping = false;
+
+  // Timer descriptors
   let typingTimer = null;
   let syncDebounceTimer = null;
   let draftDebounceTimer = null;
   let activeModelIdCache = "";
 
+  // Web Audio keep-alive state descriptors
+  let activeAudioCtx = null;
+  let activeAudioOscillator = null;
+  let activeAudioGain = null;
+  let activeRpcRequestCount = 0;
+
+  // --- Engine Tab Keep-Alive Watchdog ---
+
+  /**
+   * Prevents Chromium/Edge process freezing and socket throttling
+   * on background tabs by maintaining an active inaudible audio thread.
+   */
+  function acquireTabKeepAlive() {
+    activeRpcRequestCount++;
+    if (activeAudioCtx) return;
+
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+
+      activeAudioCtx = new AudioCtx();
+      activeAudioOscillator = activeAudioCtx.createOscillator();
+      activeAudioGain = activeAudioCtx.createGain();
+
+      // Near-zero gain retains active audio processing thread without audible sound
+      activeAudioGain.gain.setValueAtTime(0.00001, activeAudioCtx.currentTime);
+      activeAudioOscillator.connect(activeAudioGain);
+      activeAudioGain.connect(activeAudioCtx.destination);
+      activeAudioOscillator.start();
+    } catch (e) {
+      console.debug("[AISU] Keep-Alive allocation bypassed:", e);
+    }
+  }
+
+  /**
+   * Releases Web Audio graph to preserve host system resources when idle.
+   */
+  function releaseTabKeepAlive() {
+    activeRpcRequestCount = Math.max(0, activeRpcRequestCount - 1);
+    if (activeRpcRequestCount === 0 && activeAudioCtx) {
+      try {
+        if (activeAudioOscillator) {
+          activeAudioOscillator.stop();
+          activeAudioOscillator.disconnect();
+          activeAudioOscillator = null;
+        }
+        if (activeAudioGain) {
+          activeAudioGain.disconnect();
+          activeAudioGain = null;
+        }
+        activeAudioCtx.close();
+      } catch {}
+      activeAudioCtx = null;
+    }
+  }
+
+  /**
+   * Telemetry diagnostic logger for dropped long-running RPC pipelines.
+   * @param {string} url
+   * @param {number} status
+   * @param {number} durationMs
+   */
+  function handleRpcFailureTelemetry(url, status, durationMs) {
+    if (status === 0 && durationMs >= 50000) {
+      console.warn(
+        `[AISU Watchdog] RPC connection closed prematurely (~${(durationMs / 1000).toFixed(1)}s) for ${url}.\n` +
+          `Root Cause: Client timeout or Edge background thread throttling.\n` +
+          `Remedy: Server-side KV cache has likely completed processing. Next dispatch will hit warm cache.`,
+      );
+    }
+  }
+
+  // --- Runtime Model & Storage Management ---
+
+  /**
+   * Retrieves active model identifier using fallback hierarchy.
+   * @returns {string}
+   */
   function getActiveModelId() {
     try {
       const prefRaw = localStorage.getItem("aiStudioUserPreference");
@@ -111,17 +201,32 @@
     return "gemini-3.8-flash";
   }
 
+  /**
+   * @param {string} [specificModelId]
+   * @returns {string}
+   */
   function getStorageKey(specificModelId) {
     const modelId = specificModelId || getActiveModelId();
     return `aistudio_model_cfg_${modelId}`;
   }
 
+  /**
+   * @returns {string}
+   */
   function getChatDraftKey() {
     const match = location.pathname.match(/\/prompts\/([a-zA-Z0-9_-]+)/);
     const chatId = match ? match[1] : "new_chat";
     return `aisu_draft_${chatId}`;
   }
 
+  /**
+   * @param {*} val
+   * @param {boolean} isFloat
+   * @param {number} fallback
+   * @param {number} min
+   * @param {number} max
+   * @returns {number}
+   */
   function clampNumber(val, isFloat, fallback, min, max) {
     if (val === undefined || val === null || val === "") return fallback;
     const clean = String(val).replace(",", ".").trim();
@@ -130,6 +235,10 @@
     return Math.max(min, Math.min(max, num));
   }
 
+  /**
+   * @param {string} [specificModelId]
+   * @returns {{preset: string, temperature: number, topP: number, topK: number, confirmSend: boolean}}
+   */
   function loadParams(specificModelId) {
     try {
       const key = getStorageKey(specificModelId);
@@ -157,17 +266,25 @@
     }
   }
 
+  /**
+   * @param {Object} params
+   * @param {string} [specificModelId]
+   */
   function saveParams(params, specificModelId) {
     try {
       const key = getStorageKey(specificModelId);
       localStorage.setItem(key, JSON.stringify(params));
     } catch (error) {
-      console.warn("[AISU] Failed to persist parameters:", error);
+      console.warn("[AISU] Persistence failure:", error);
     }
   }
 
   // --- Precision Protobuf RPC Interceptor ---
 
+  /**
+   * @param {string} url
+   * @returns {boolean}
+   */
   function isTargetRpc(url) {
     if (!url || typeof url !== "string") return false;
     return (
@@ -178,19 +295,19 @@
   }
 
   /**
-   * Patches outgoing Protobuf array with 100% schema fidelity.
+   * Patches outgoing Protobuf array preserving schema boundaries & thinking config indices.
+   * @param {Array} root
+   * @returns {boolean}
    */
   function patchPayloadSafe(root) {
     if (!root || !Array.isArray(root)) return false;
 
-    // 1. GenerateContent Schema
-    // root = ["models/gemini-...", [contents], [safety], [generationConfig], ...]
+    // 1. GenerateContent Schema: root = ["models/...", [contents], [safety], [generationConfig], ...]
     if (typeof root[0] === "string" && root[0].startsWith("models/")) {
       const modelId = root[0].replace(/^models\//, "").toLowerCase();
       const params = loadParams(modelId);
 
       if (Array.isArray(root[3]) && root[3].length >= 7) {
-        // Точечно меняем только 3 индекса, оставляя Thinking Config [16] в полной сохранности!
         root[3][4] = params.temperature;
         root[3][5] = params.topP;
         root[3][6] = params.topK;
@@ -200,7 +317,6 @@
     }
 
     // 2. CreatePrompt / UpdatePrompt Schema
-    // root = [[null, null, null, [temp, null, "models/...", null, topP, topK, maxTokens, ...], ...]]
     if (Array.isArray(root[0]) && Array.isArray(root[0][3])) {
       const cfg = root[0][3];
       if (typeof cfg[2] === "string" && cfg[2].startsWith("models/")) {
@@ -217,6 +333,10 @@
     return false;
   }
 
+  /**
+   * @param {string} rawBody
+   * @returns {string}
+   */
   function modifyPayload(rawBody) {
     if (!rawBody || typeof rawBody !== "string") return rawBody;
 
@@ -239,7 +359,8 @@
     return rawBody;
   }
 
-  // --- Network Hooks ---
+  // --- Network Hooks (Fetch & XHR) ---
+
   const nativeOpen = XMLHttpRequest.prototype.open;
   const nativeSend = XMLHttpRequest.prototype.send;
 
@@ -250,8 +371,24 @@
   };
 
   XMLHttpRequest.prototype.send = function (body) {
-    if (this._isTargetRpc && typeof body === "string") {
-      body = modifyPayload(body);
+    if (this._isTargetRpc) {
+      acquireTabKeepAlive();
+      const startTime = performance.now();
+
+      const onFinalize = () => {
+        releaseTabKeepAlive();
+        this.removeEventListener("loadend", onFinalize);
+        if (this.status === 0 || this.status >= 400) {
+          const duration = performance.now() - startTime;
+          handleRpcFailureTelemetry(this._url, this.status, duration);
+        }
+      };
+
+      this.addEventListener("loadend", onFinalize);
+
+      if (typeof body === "string") {
+        body = modifyPayload(body);
+      }
     }
     return nativeSend.call(this, body);
   };
@@ -265,7 +402,9 @@
           ? input.url
           : String(input && input.url ? input.url : input);
 
-    if (isTargetRpc(url)) {
+    const isRpc = isTargetRpc(url);
+    if (isRpc) {
+      acquireTabKeepAlive();
       if (init && typeof init.body === "string") {
         init.body = modifyPayload(init.body);
       } else if (input instanceof Request) {
@@ -275,10 +414,29 @@
         } catch {}
       }
     }
-    return nativeFetch.call(this, input, init);
+
+    const startTime = performance.now();
+    try {
+      const response = await nativeFetch.call(this, input, init);
+      return response;
+    } catch (fetchError) {
+      if (isRpc) {
+        const duration = performance.now() - startTime;
+        handleRpcFailureTelemetry(url, 0, duration);
+      }
+      throw fetchError;
+    } finally {
+      if (isRpc) {
+        releaseTabKeepAlive();
+      }
+    }
   };
 
-  // --- Draft Auto-Save ---
+  // --- Prompt Draft Persistence ---
+
+  /**
+   * @param {string} text
+   */
   function scheduleDraftSave(text) {
     if (draftDebounceTimer) clearTimeout(draftDebounceTimer);
     draftDebounceTimer = setTimeout(() => {
@@ -314,14 +472,15 @@
     } catch {}
   }
 
-  // --- Confirmation Interceptor ---
+  // --- Execution Guards & Interceptors ---
+
+  /**
+   * @param {Event} e
+   * @param {Function} runAction
+   */
   function interceptSendWithConfirmation(e, runAction) {
     const params = loadParams();
-
-    if (!params.confirmSend) {
-      return; // Отдаем управление штатному обработчику Google
-    }
-
+    if (!params.confirmSend) return;
     if (isConfirmedExecution) return;
 
     e.preventDefault();
@@ -330,7 +489,7 @@
 
     const modelId = getActiveModelId();
     const confirmed = window.confirm(
-      `[AI Studio Pro Suite]\n\nSend prompt to model "${modelId}"?`,
+      `[AI Studio Pro Suite]\n\nDispatch prompt to model "${modelId}"?`,
     );
 
     if (confirmed) {
@@ -345,7 +504,14 @@
     }
   }
 
-  // --- UI Builders ---
+  // --- DOM Element Synthesizers (CSP & Trusted Types Compliant) ---
+
+  /**
+   * @param {string} tag
+   * @param {Record<string, string|null>} [props]
+   * @param {...(Node|string|null)} children
+   * @returns {HTMLElement}
+   */
   function createEl(tag, props = {}, ...children) {
     const el =
       tag === "svg" || tag === "path"
@@ -372,6 +538,9 @@
     return /** @type {HTMLElement} */ (el);
   }
 
+  /**
+   * @param {HTMLInputElement} rangeEl
+   */
   function updateSliderFill(rangeEl) {
     if (!rangeEl) return;
     const min = parseFloat(rangeEl.min) || 0;
@@ -384,6 +553,9 @@
     rangeEl.style.setProperty("--aisu-progress", `${percent.toFixed(2)}%`);
   }
 
+  /**
+   * Discovers native Material 3 input elements.
+   */
   function getNativeControls() {
     const isCustom = (el) =>
       !el || el.hasAttribute("data-aisu") || el.closest("[data-aisu]");
@@ -435,6 +607,11 @@
     };
   }
 
+  /**
+   * Dispatches input mutations across Angular NgModel binding boundaries.
+   * @param {HTMLInputElement} input
+   * @param {string|number} value
+   */
   function dispatchNativeInput(input, value) {
     if (!input) return;
     const strVal = String(value);
@@ -453,6 +630,17 @@
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  /**
+   * @param {string} prefix
+   * @param {string} title
+   * @param {number} min
+   * @param {number} max
+   * @param {number} step
+   * @param {number} val
+   * @param {boolean} isFloat
+   * @param {string} tip
+   * @returns {HTMLElement}
+   */
   function createCustomSlider(
     prefix,
     title,
@@ -541,6 +729,11 @@
     return block;
   }
 
+  /**
+   * @param {string} currentPresetKey
+   * @param {boolean} confirmSend
+   * @returns {HTMLElement}
+   */
   function createPresetDropdown(currentPresetKey, confirmSend) {
     const activePreset = PRESETS[currentPresetKey];
     const initialLabel = activePreset ? activePreset.name : "Custom";
@@ -587,7 +780,9 @@
         createEl(
           "div",
           {
-            className: `aisu-select__option ${k === currentPresetKey ? "aisu-select__option--selected" : ""}`,
+            className: `aisu-select__option ${
+              k === currentPresetKey ? "aisu-select__option--selected" : ""
+            }`,
             role: "option",
             "data-preset": k,
             "data-aisu": "true",
@@ -674,6 +869,10 @@
     );
   }
 
+  /**
+   * Applies target preset parameters and propagates to native inputs.
+   * @param {string} presetKey
+   */
   function applyPreset(presetKey) {
     const preset = PRESETS[presetKey];
     if (!preset) return;
@@ -691,6 +890,7 @@
 
       const { nativeTempRange, nativeTempNum, nativeTopPRange, nativeTopPNum } =
         getNativeControls();
+
       if (nativeTempRange) dispatchNativeInput(nativeTempRange, preset.temp);
       if (nativeTempNum) dispatchNativeInput(nativeTempNum, preset.temp);
       if (nativeTopPRange) dispatchNativeInput(nativeTopPRange, preset.topP);
@@ -702,6 +902,9 @@
     }
   }
 
+  /**
+   * Synchronizes UI inputs with state stored in localStorage.
+   */
   function syncInputsWithStorage() {
     const params = loadParams();
 
@@ -736,25 +939,31 @@
       { prefix: "mod-topk", val: String(params.topK) },
     ];
 
-    for (const { prefix, val } of sliderMap) {
+    for (let i = 0; i < sliderMap.length; i++) {
+      const item = sliderMap[i];
       const range = /** @type {HTMLInputElement | null} */ (
-        document.getElementById(`aisu-range-${prefix}`)
+        document.getElementById(`aisu-range-${item.prefix}`)
       );
       const num = /** @type {HTMLInputElement | null} */ (
-        document.getElementById(`aisu-num-${prefix}`)
+        document.getElementById(`aisu-num-${item.prefix}`)
       );
 
-      if (range && document.activeElement !== range && range.value !== val) {
-        range.value = val;
+      if (
+        range &&
+        document.activeElement !== range &&
+        range.value !== item.val
+      ) {
+        range.value = item.val;
         updateSliderFill(range);
       }
-      if (num && document.activeElement !== num && num.value !== val) {
-        num.value = val;
+      if (num && document.activeElement !== num && num.value !== item.val) {
+        num.value = item.val;
       }
     }
 
     const { nativeTempRange, nativeTempNum, nativeTopPRange, nativeTopPNum } =
       getNativeControls();
+
     if (
       nativeTempRange &&
       document.activeElement !== nativeTempRange &&
@@ -763,12 +972,14 @@
       isProgrammaticChange = true;
       try {
         dispatchNativeInput(nativeTempRange, params.temperature);
-        if (nativeTempNum)
+        if (nativeTempNum) {
           dispatchNativeInput(nativeTempNum, params.temperature);
+        }
       } finally {
         isProgrammaticChange = false;
       }
     }
+
     if (
       nativeTopPRange &&
       document.activeElement !== nativeTopPRange &&
@@ -777,7 +988,9 @@
       isProgrammaticChange = true;
       try {
         dispatchNativeInput(nativeTopPRange, params.topP);
-        if (nativeTopPNum) dispatchNativeInput(nativeTopPNum, params.topP);
+        if (nativeTopPNum) {
+          dispatchNativeInput(nativeTopPNum, params.topP);
+        }
       } finally {
         isProgrammaticChange = false;
       }
@@ -791,11 +1004,13 @@
     if (trigger) trigger.setAttribute("aria-expanded", "false");
   }
 
-  // --- Event Delegation ---
+  // --- Global Event Delegation ---
+
   function bindEventDelegation() {
     if (window._aisuEventsBound) return;
     window._aisuEventsBound = true;
 
+    // Detect model panel changes
     document.addEventListener(
       "click",
       (e) => {
@@ -814,6 +1029,7 @@
       true,
     );
 
+    // Prompt dispatch interceptor via Click
     document.addEventListener(
       "click",
       (e) => {
@@ -832,6 +1048,7 @@
       true,
     );
 
+    // Prompt dispatch interceptor via Ctrl+Enter / Cmd+Enter
     document.addEventListener(
       "keydown",
       (e) => {
@@ -866,6 +1083,7 @@
       true,
     );
 
+    // Dropdown toggle & option selection
     document.addEventListener("click", (e) => {
       const target = /** @type {HTMLElement | null} */ (e.target);
       if (!target) return;
@@ -896,6 +1114,7 @@
       }
     });
 
+    // Slider range & input dispatching
     document.addEventListener("input", (e) => {
       const target = /** @type {HTMLElement | null} */ (e.target);
       if (!target) return;
@@ -961,6 +1180,7 @@
       }
     });
 
+    // Numeric inputs validation & confirm toggle
     document.addEventListener("change", (e) => {
       const target = /** @type {HTMLElement | null} */ (e.target);
       if (!target || target.nodeName !== "INPUT") return;
@@ -1009,13 +1229,20 @@
     });
   }
 
+  // --- Layout Reconciliation ---
+
+  /**
+   * @param {Element|null} anchor
+   * @param {Element|null} target
+   */
   function reconcilePosition(anchor, target) {
     if (!anchor || !target || !anchor.parentNode) return;
     if (
       target.parentNode === anchor.parentNode &&
       anchor.nextElementSibling === target
-    )
+    ) {
       return;
+    }
     anchor.after(target);
   }
 
@@ -1025,7 +1252,7 @@
     const params = loadParams();
     const presetGroup = document.getElementById("aisu-preset-group");
 
-    // 1. Temperature: ВСЕГДА выводим, если Google скрыл нативный ползунок (в том числе для 3.8 Flash!)
+    // 1. Temperature: mount custom slider if native slider is hidden
     const customTemp = document.getElementById("aisu-slider-block-mod-temp");
     if (nativeTempRange) {
       if (customTemp) customTemp.remove();
@@ -1045,14 +1272,14 @@
       reconcilePosition(presetGroup, tempBlock);
     }
 
-    // 2. Output length anchor
+    // 2. Locate output length item anchor
     const outputLengthItem =
       document.querySelector(".settings-item.output-length") ||
       document
         .querySelector('input[name="maxOutputTokens"]')
         ?.closest(".settings-item");
 
-    // 3. Top P
+    // 3. Top P reconciliation
     const customTopP = document.getElementById("aisu-slider-block-mod-topp");
     if (nativeTopPRange) {
       if (customTopP) customTopP.remove();
@@ -1072,7 +1299,7 @@
       reconcilePosition(outputLengthItem, topPBlock);
     }
 
-    // 4. Top K
+    // 4. Top K reconciliation
     const topKAnchor =
       nativeTopPContainer ||
       document.getElementById("aisu-slider-block-mod-topp") ||
@@ -1157,6 +1384,9 @@
     }
   }
 
+  /**
+   * @param {number} [delay]
+   */
   function scheduleSync(delay = 500) {
     if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
     syncDebounceTimer = setTimeout(() => {
@@ -1168,92 +1398,206 @@
     }, delay);
   }
 
-  const settingsObserver = new MutationObserver((mutations) => {
-    if (isInternalMutation || isUserTyping) return;
+  // --- Precision Lifecycle & SPA Engine Observer ---
 
-    for (let i = 0; i < mutations.length; i++) {
-      const target = mutations[i].target;
-      if (!target) continue;
+  const LOG_PREFIX = "[AISU Suite]";
 
-      const el =
-        target.nodeType === 1
-          ? /** @type {HTMLElement} */ (target)
-          : target.parentElement;
-      if (!el) continue;
-
-      if (
-        el.closest(
-          ".model-selector-card, .selector-container, ms-model-selector",
-        )
-      ) {
-        scheduleSync(500);
-        break;
-      }
-    }
-  });
-
-  let isObservingDedicatedTarget = false;
-
-  function bindDedicatedObserver() {
-    const target =
-      document.querySelector("ms-run-settings") ||
-      document.querySelector("ms-right-side-panel");
-
-    if (target && !isObservingDedicatedTarget) {
-      settingsObserver.disconnect();
-      settingsObserver.observe(target, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
-      isObservingDedicatedTarget = true;
-      scheduleSync(200);
-      return true;
-    }
-    return false;
-  }
-
-  function bootstrap() {
-    if (bindDedicatedObserver()) return;
-
-    const rootNode = document.documentElement || document;
-    const bootstrapObserver = new MutationObserver(() => {
-      if (bindDedicatedObserver()) {
-        bootstrapObserver.disconnect();
-      }
-    });
-
-    bootstrapObserver.observe(rootNode, { childList: true, subtree: true });
-
-    if (document.readyState === "loading") {
-      document.addEventListener(
-        "DOMContentLoaded",
-        () => bindDedicatedObserver(),
-        { once: true },
+  /**
+   * Safe, zero-overhead console logger.
+   * @param {string} action
+   * @param {Object} [details]
+   */
+  function logEngine(action, details) {
+    if (details) {
+      console.log(
+        `%c${LOG_PREFIX}%c ${action}`,
+        "color: #3b82f6; font-weight: bold;",
+        "color: inherit;",
+        details,
+      );
+    } else {
+      console.log(
+        `%c${LOG_PREFIX}%c ${action}`,
+        "color: #3b82f6; font-weight: bold;",
+        "color: inherit;",
       );
     }
   }
 
-  bootstrap();
+  function injectInputs() {
+    bindEventDelegation();
+
+    const currentParams = loadParams();
+    const anchor =
+      document.querySelector(".selector-container.field-group") ||
+      document.querySelector("ms-model-selector")?.closest(".field-group") ||
+      document.querySelector(
+        ".settings-items-wrapper .scrollable-area > :first-child",
+      );
+
+    if (!anchor || !anchor.parentNode) {
+      return false;
+    }
+
+    let presetGroup = document.getElementById("aisu-preset-group");
+    const isNewInstance = !presetGroup;
+
+    if (isNewInstance) {
+      presetGroup = createPresetDropdown(
+        currentParams.preset,
+        currentParams.confirmSend,
+      );
+      anchor.after(presetGroup);
+      logEngine("Mounted Sampling Presets container into DOM", {
+        model: getActiveModelId(),
+      });
+    } else if (anchor.nextElementSibling !== presetGroup) {
+      anchor.after(presetGroup);
+      logEngine("Re-anchored Sampling Presets container after DOM mutation");
+    }
+
+    reconcileControls();
+    syncInputsWithStorage();
+    restorePromptDraft();
+    return true;
+  }
+
+  function executeSync() {
+    if (isInternalMutation || isUserTyping) return;
+
+    const currentModelId = getActiveModelId();
+    const modelChanged = currentModelId !== activeModelIdCache;
+
+    if (modelChanged) {
+      logEngine(
+        `Active model transition: "${activeModelIdCache || "init"}" -> "${currentModelId}"`,
+      );
+      activeModelIdCache = currentModelId;
+    }
+
+    isInternalMutation = true;
+    try {
+      const injected = injectInputs();
+      if (injected && modelChanged) {
+        logEngine("Synchronized parameters for new model state", loadParams());
+      }
+    } finally {
+      isInternalMutation = false;
+    }
+  }
+
+  /**
+   * @param {number} [delay]
+   */
+  function scheduleSync(delay = 150) {
+    if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = setTimeout(() => {
+      if (isUserTyping) {
+        scheduleSync(250);
+        return;
+      }
+      executeSync();
+    }, delay);
+  }
+
+  /**
+   * Root DOM Observer with high-efficiency selector filtering.
+   * Eliminates detached node memory leaks and captures Angular route view destroys/rebuilds.
+   */
+  function initEngineObserver() {
+    const rootTarget = document.body || document.documentElement;
+    if (!rootTarget) return;
+
+    const rootObserver = new MutationObserver((mutations) => {
+      if (isInternalMutation || isUserTyping) return;
+
+      for (let i = 0; i < mutations.length; i++) {
+        const mutation = mutations[i];
+
+        // Fast-path: inspect added nodes for run settings containers
+        if (mutation.addedNodes.length > 0) {
+          for (let j = 0; j < mutation.addedNodes.length; j++) {
+            const node = mutation.addedNodes[j];
+            if (node.nodeType !== 1) continue;
+            const el = /** @type {HTMLElement} */ (node);
+
+            if (
+              el.matches(
+                "ms-run-settings, ms-right-side-panel, ms-model-selector",
+              ) ||
+              el.querySelector(
+                "ms-run-settings, ms-model-selector, .model-selector-card",
+              )
+            ) {
+              logEngine("Detected settings panel mount in DOM tree");
+              scheduleSync(50);
+              return;
+            }
+          }
+        }
+
+        const target = mutation.target;
+        if (!target) continue;
+        const el =
+          target.nodeType === 1
+            ? /** @type {HTMLElement} */ (target)
+            : target.parentElement;
+        if (!el) continue;
+
+        if (
+          el.closest("ms-run-settings, ms-model-selector, .selector-container")
+        ) {
+          scheduleSync(150);
+          return;
+        }
+      }
+    });
+
+    rootObserver.observe(rootTarget, {
+      childList: true,
+      subtree: true,
+      attributes: false,
+      characterData: false,
+    });
+
+    logEngine("Root Engine Lifecycle Observer active");
+    scheduleSync(100);
+  }
+
+  // --- Bootstrap Observer Execution ---
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initEngineObserver, {
+      once: true,
+    });
+  } else {
+    initEngineObserver();
+  }
+
+  // --- Robust SPA Navigation Interceptors ---
 
   const wrapHistory = (type) => {
     const orig = history[type];
     return function (...args) {
       activeModelIdCache = "";
       const res = orig.apply(this, args);
-      scheduleSync(200);
+      logEngine(`SPA Navigation event triggered via history.${type}`);
+      scheduleSync(100);
+      setTimeout(() => scheduleSync(350), 350);
       return res;
     };
   };
 
   history.pushState = wrapHistory("pushState");
   history.replaceState = wrapHistory("replaceState");
+
   window.addEventListener("popstate", () => {
     activeModelIdCache = "";
-    scheduleSync(200);
+    logEngine("Browser history back/forward navigation detected");
+    scheduleSync(100);
   });
+
   window.addEventListener("hashchange", () => {
     activeModelIdCache = "";
-    scheduleSync(200);
+    scheduleSync(100);
   });
 })();
